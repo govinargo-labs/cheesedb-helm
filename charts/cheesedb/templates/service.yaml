@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cheesedb.fullname" . }}
+  labels:
+    {{- include "cheesedb.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "cheesedb.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.service.port }}
+      targetPort: https
+---
+# The StatefulSet's own service, which gives the pod a stable name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cheesedb.fullname" . }}-headless
+  labels:
+    {{- include "cheesedb.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "cheesedb.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.service.port }}
+      targetPort: https

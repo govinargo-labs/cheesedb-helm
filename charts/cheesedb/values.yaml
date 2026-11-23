@@ -1,0 +1,84 @@
+# Values for the cheesedb chart.
+
+image:
+  repository: ghcr.io/govinargo-labs/cheesedb
+  # Default: the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The admin token creates and deletes agents. The server keeps only its
+# SHA-256 (the "key hash"), never the token.
+admin:
+  # Leave all three empty and the chart makes a random admin token on first
+  # install, keeps it (and its hash) in the Secret <release>-cheesedb-admin,
+  # and reuses it on upgrades. Read it with the command in the notes printed
+  # after install.
+  #
+  # Or keep the token out of the cluster: make one yourself and give only
+  # its hash, which is safe to store anywhere (the token cannot be worked
+  # out from it):
+  #   TOKEN=$(openssl rand -hex 32)
+  #   printf %s "$TOKEN" | shasum -a 256 | cut -d' ' -f1
+  keyHash: ""
+  # Or name your own Secret holding the hash under the key "admin.key".
+  existingSecret: ""
+
+# The server serves TLS only.
+tls:
+  # selfSigned: the chart makes a small certificate authority and a
+  #   certificate signed by it, keeps them in the Secret <release>-cheesedb-tls
+  #   and reuses them on upgrades. Clients trust its ca.crt.
+  # certManager: a cert-manager Certificate from issuerRef.
+  # existingSecret: your own kubernetes.io/tls Secret.
+  mode: selfSigned
+  existingSecret: ""
+  certManager:
+    issuerRef:
+      name: ""
+      kind: Issuer
+  # More names for the certificate. It always covers the service's names
+  # (<name>, <name>.<namespace>, ...svc, ...svc.cluster.local), localhost
+  # and 127.0.0.1 (for kubectl port-forward).
+  extraDnsNames: []
+  validDays: 1825
+
+# One volume holds the store. The server is a single writer: never more
+# than one pod, so there is no replicas setting.
+persistence:
+  size: 10Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+service:
+  type: ClusterIP
+  port: 7700
+
+server:
+  # Extra flags for cheesedb serve, e.g. ["--quiet"] for no request log.
+  extraArgs: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    # An open agent keeps its graph in memory, and each loaded vector index
+    # about one byte per value per vector (1M memories x 768 values: about
+    # 1.1 GB). Size this for your largest agents.
+    memory: 2Gi
+
+# Only let chosen pods reach the server. Needs a network plugin that
+# enforces NetworkPolicy.
+networkPolicy:
+  enabled: false
+  # Peers allowed in, as NetworkPolicy "from" entries, e.g.
+  #   - podSelector:
+  #       matchLabels:
+  #         app: my-agent
+  from: []
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,44 @@
+{{- if eq .Values.tls.mode "selfSigned" }}
+{{- $name := include "cheesedb.tlsSecret" . }}
+{{- $old := lookup "v1" "Secret" .Release.Namespace $name }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cheesedb.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+{{- if and $old (index $old.data "ca.crt") }}
+  {{- /* Reuse: clients already trust this certificate authority. */}}
+  ca.crt: {{ index $old.data "ca.crt" }}
+  tls.crt: {{ index $old.data "tls.crt" }}
+  tls.key: {{ index $old.data "tls.key" }}
+{{- else }}
+{{- $ca := genCA "cheesedb-ca" (int .Values.tls.validDays) }}
+{{- $cert := genSignedCert (include "cheesedb.fullname" .) (list "127.0.0.1") (include "cheesedb.dnsNames" . | fromJsonArray) (int .Values.tls.validDays) $ca }}
+  ca.crt: {{ $ca.Cert | b64enc }}
+  tls.crt: {{ $cert.Cert | b64enc }}
+  tls.key: {{ $cert.Key | b64enc }}
+{{- end }}
+{{- else if eq .Values.tls.mode "certManager" }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "cheesedb.fullname" . }}
+  labels:
+    {{- include "cheesedb.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "cheesedb.tlsSecret" . }}
+  issuerRef:
+    name: {{ required "tls.certManager.issuerRef.name is required when tls.mode is certManager" .Values.tls.certManager.issuerRef.name }}
+    kind: {{ .Values.tls.certManager.issuerRef.kind }}
+  dnsNames:
+    {{- range (include "cheesedb.dnsNames" . | fromJsonArray) }}
+    - {{ . | quote }}
+    {{- end }}
+  ipAddresses:
+    - 127.0.0.1
+{{- else if ne .Values.tls.mode "existingSecret" }}
+{{- fail "tls.mode must be selfSigned, certManager or existingSecret: the server serves TLS only" }}
+{{- end }}

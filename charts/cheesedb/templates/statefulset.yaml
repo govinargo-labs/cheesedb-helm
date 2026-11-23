@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "cheesedb.fullname" . }}
+  labels:
+    {{- include "cheesedb.labels" . | nindent 4 }}
+spec:
+  # Always one: a store has one writer, and its lock file refuses a second
+  # server. An update stops the old pod before starting the new one.
+  replicas: 1
+  serviceName: {{ include "cheesedb.fullname" . }}-headless
+  selector:
+    matchLabels:
+      {{- include "cheesedb.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cheesedb.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Restart when the admin key changes (the server reads it at start).
+        checksum/admin: {{ include (print $.Template.BasePath "/secret-admin.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      # The server never talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      # Shutdown waits up to 30 s for running requests, then closes the store.
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: cheesedb
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --dir=/data/store
+            - --listen=:7700
+            - --tls-cert=/tls/tls.crt
+            - --tls-key=/tls/tls.key
+            - --admin-key=/admin/admin.key
+            {{- range .Values.server.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            - name: CHEESEDB_DIR
+              value: /data
+          ports:
+            - name: https
+              containerPort: 7700
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: https
+              scheme: HTTPS
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: https
+              scheme: HTTPS
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            - name: admin
+              mountPath: /admin
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ include "cheesedb.tlsSecret" . }}
+            defaultMode: 0440
+        - name: admin
+          secret:
+            secretName: {{ include "cheesedb.adminSecret" . }}
+            # Only the hash is mounted; the token (if the chart made one)
+            # stays in the Secret.
+            items:
+              - key: admin.key
+                path: admin.key
+            defaultMode: 0440
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "cheesedb.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes: [{{ .Values.persistence.accessMode | quote }}]
+        {{- with .Values.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
