@@ -8,6 +8,10 @@
 charts/*.tgz
 charts/*.tar.gz
 
+# CI-generated chart files (index.yaml, .tgz)
+public/index.yaml
+public/*.tgz
+
 # IDE
 .idea/
 .vscode/settings.json
