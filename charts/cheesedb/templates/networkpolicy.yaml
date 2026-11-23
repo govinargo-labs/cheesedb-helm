@@ -1,4 +1,9 @@
 {{- if .Values.networkPolicy.enabled }}
+{{- /* An ingress rule with no "from" lets every source in, the opposite of
+       what turning the policy on promises. */}}
+{{- if not .Values.networkPolicy.from }}
+{{- fail "networkPolicy.enabled needs at least one peer in networkPolicy.from: with none, every pod could reach the server" }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -13,10 +18,8 @@ spec:
   ingress:
     - ports:
         - port: https
-      {{- with .Values.networkPolicy.from }}
       from:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- toYaml .Values.networkPolicy.from | nindent 8 }}
   # The server calls nothing: no model, no outside service.
   egress: []
 {{- end }}

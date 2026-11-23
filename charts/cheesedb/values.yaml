@@ -68,8 +68,9 @@ resources:
     # 1.1 GB). Size this for your largest agents.
     memory: 2Gi
 
-# Only let chosen pods reach the server. Needs a network plugin that
-# enforces NetworkPolicy.
+# Only let chosen pods reach the server, and let it send nothing out.
+# Needs a network plugin that enforces NetworkPolicy. Turning it on
+# requires at least one peer in "from".
 networkPolicy:
   enabled: false
   # Peers allowed in, as NetworkPolicy "from" entries, e.g.

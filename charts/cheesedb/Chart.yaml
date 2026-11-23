@@ -4,11 +4,14 @@ description: The cheesedb memory server for AI agents (preview). One server per 
 type: application
 version: 0.1.0
 appVersion: "0.4.0"
-home: https://cheesedb.dev
+home: https://cheesedb.dev/server
 sources:
+  - https://github.com/govinargo-labs/cheesedb-helm
   - https://github.com/govinargo-labs/cheesedb
-license: Apache-2.0
 keywords:
   - database
   - ai-memory
   - agents
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/prerelease: "true"

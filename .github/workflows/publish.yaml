@@ -1,68 +1,112 @@
-name: Publish Helm Chart
+# Publishes the chart to GitHub's container registry (OCI), next to the
+# server image:
+#
+#   oci://ghcr.io/govinargo-labs/charts/cheesedb
+#
+# A push to main that changes the chart publishes the version in
+# charts/cheesedb/Chart.yaml, unless that version is already published:
+# a published version is never overwritten, so bump `version` to publish.
+# Pull requests only lint and render the chart. Only main ever publishes,
+# also when the workflow is started by hand.
+#
+# Nothing to set up: the workflow's own GITHUB_TOKEN signs in to ghcr.io.
+# After the first publish, make the package public once (ghcr package
+# settings), or nobody else can install it.
+#
+# Actions are pinned to full commit SHAs (the tag is in the comment), and
+# Helm to one version, so a moved tag cannot change what runs here.
+name: Publish Helm chart
 
 on:
   push:
     branches: [main]
     paths:
       - 'charts/**'
-      - '.github/workflows/**'
+      - '.github/workflows/publish.yaml'
+  pull_request:
+    paths:
+      - 'charts/**'
+      - '.github/workflows/publish.yaml'
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
+env:
+  HELM_VERSION: v4.3.1
+  CHART_REF: oci://ghcr.io/govinargo-labs/charts/cheesedb
 
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
 
       - name: Lint chart
         run: helm lint ./charts/cheesedb
 
+      # Renders every template to catch errors, and throws the output away:
+      # it holds a freshly made admin token and TLS key, which must never be
+      # kept or published.
+      - name: Render chart (output discarded)
+        run: helm template mem ./charts/cheesedb --namespace cheesedb > /dev/null
+
   publish:
     needs: lint
+    # Never from a pull request, and never from a branch other than main,
+    # even when started by hand.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
+    permissions:
+      contents: read
+      packages: write
+    # One publish at a time; pull request runs are not in this group, so
+    # they can never cancel a queued publish.
+    concurrency:
+      group: publish-chart
+      cancel-in-progress: false   # never stop a publish halfway
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
-
-      - name: Set up Pages
-        uses: actions/configure-pages@v5
-
-      - name: Render chart templates
-        run: |
-          helm template cheesedb ./charts/cheesedb \
-            --namespace cheesedb \
-            --output-dir ./public
-
-      - name: Generate index.yaml
-        run: |
-          helm package ./charts/cheesedb --destination ./public
-          helm repo index ./public --url https://govinargo-labs.github.io/cheesedb-helm
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          path: ./public
+          version: ${{ env.HELM_VERSION }}
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Sign in to ghcr.io
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "$REGISTRY_TOKEN" | helm registry login ghcr.io --username "$ACTOR" --password-stdin
+
+      # Fails closed: only Helm's "not found" means the version is new.
+      # Any other error (registry down, rate limit, denied) stops the job
+      # instead of risking an overwrite of a published version.
+      - name: Package and push (never overwrites a published version)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(helm show chart ./charts/cheesedb | awk '/^version:/ {print $2}')
+          if out=$(helm show chart "$CHART_REF" --version "$version" 2>&1); then
+            echo "cheesedb chart $version is already published; bump version in charts/cheesedb/Chart.yaml to publish a new one."
+            exit 0
+          fi
+          if ! grep -qE ': not found$' <<<"$out"; then
+            echo "Could not tell whether $version is already published, so nothing was pushed:" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+          helm package ./charts/cheesedb --destination dist
+          helm push "dist/cheesedb-$version.tgz" "${CHART_REF%/cheesedb}"
+          echo "Published $CHART_REF --version $version"

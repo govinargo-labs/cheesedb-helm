@@ -10,15 +10,15 @@ yet; keep the server inside a trusted cluster).
 
 2. The admin token (creates and deletes agents):
 {{- if or .Values.admin.keyHash .Values.admin.existingSecret }}
-   the token whose hash you gave.
+   the token whose hash you gave: ADMIN=<that token>
 {{- else }}
-   kubectl get secret -n {{ .Release.Namespace }} {{ include "cheesedb.adminSecret" . }} -o jsonpath='{.data.admin-token}' | base64 -d
+   ADMIN=$(kubectl get secret -n {{ .Release.Namespace }} {{ include "cheesedb.adminSecret" . }} -o jsonpath='{.data.admin-token}' | base64 -d)
 {{- end }}
 
 3. Try it from your machine:
    kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "cheesedb.fullname" . }} 7700:{{ .Values.service.port }}
    curl --cacert cheesedb-ca.crt https://localhost:7700/v1/health
-   curl --cacert cheesedb-ca.crt -H "Authorization: Bearer $ADMIN" -d '{"name":"alice"}' https://localhost:7700/v1/admin/agents
+   printf 'Authorization: Bearer %s\n' "$ADMIN" | curl --cacert cheesedb-ca.crt -H @- -d '{"name":"alice"}' https://localhost:7700/v1/admin/agents
 
 Inside the cluster, programs call https://{{ include "cheesedb.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
 and trust the same certificate.

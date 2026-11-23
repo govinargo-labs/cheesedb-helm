@@ -25,6 +25,7 @@ spec:
     spec:
       # The server never talks to the Kubernetes API.
       automountServiceAccountToken: false
+      enableServiceLinks: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

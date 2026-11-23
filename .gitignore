@@ -8,9 +8,8 @@
 charts/*.tgz
 charts/*.tar.gz
 
-# CI-generated chart files (index.yaml, .tgz)
-public/index.yaml
-public/*.tgz
+# Packaged charts (made by the publish workflow)
+dist/
 
 # IDE
 .idea/

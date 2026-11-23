@@ -13,23 +13,26 @@ Installs the [cheesedb](https://github.com/govinargo-labs/cheesedb) memory serve
 | Service `<release>-cheesedb`, port 7700 | HTTPS for programs in the cluster |
 | Secret `<release>-cheesedb-tls` | the server's certificate (see TLS below) |
 | Secret `<release>-cheesedb-admin` | the admin key (see Admin token below) |
-| NetworkPolicy (off by default) | only chosen pods reach the server; no traffic out |
+| NetworkPolicy (off by default) | only the pods listed in `networkPolicy.from` reach the server (at least one is required); no traffic out |
 
 The pod runs as a non-root user with a read-only root file system, no added capabilities and no Kubernetes API token. The server calls nothing outside: no model, no other service.
 
-## Try it on a laptop (kind)
+## Install
+
+The chart is published to GitHub's container registry. Needs Helm 3.8 or newer.
 
 ```sh
-# the image, from a checkout of cheesedb
-docker build -t cheesedb:dev https://github.com/govinargo-labs/cheesedb.git
-kind create cluster --name cheesedb
-kind load docker-image cheesedb:dev --name cheesedb
-
-helm install mem ./charts/cheesedb -n cheesedb --create-namespace \
-  --set image.repository=cheesedb --set image.tag=dev --set image.pullPolicy=Never
+helm install mem oci://ghcr.io/govinargo-labs/charts/cheesedb --version 0.1.0 \
+  -n cheesedb --create-namespace
 ```
 
-The notes printed after install show how to:
+It runs the image `ghcr.io/govinargo-labs/cheesedb`, tagged with the chart's `appVersion`.
+
+| Chart version | Installs cheesedb |
+|---|---|
+| 0.1.x | 0.4.0 |
+
+The chart has its own version: a chart-only fix bumps the patch number (0.1.0 to 0.1.1) and keeps the same cheesedb; a new cheesedb release bumps the minor number (0.2.0). The notes printed after install show how to:
 - get the certificate to trust;
 - read the admin token;
 - reach the server with `kubectl port-forward`:
@@ -40,10 +43,24 @@ ADMIN=$(kubectl get secret -n cheesedb mem-cheesedb-admin -o jsonpath='{.data.ad
 kubectl port-forward -n cheesedb svc/mem-cheesedb 7700:7700 &
 
 curl --cacert cheesedb-ca.crt https://localhost:7700/v1/health
-curl --cacert cheesedb-ca.crt -H "Authorization: Bearer $ADMIN" -d '{"name":"alice"}' https://localhost:7700/v1/admin/agents
+# the header comes from stdin, so the token never shows in `ps`
+printf 'Authorization: Bearer %s\n' "$ADMIN" |
+  curl --cacert cheesedb-ca.crt -H @- -d '{"name":"alice"}' https://localhost:7700/v1/admin/agents
 ```
 
 Inside the cluster, programs call `https://mem-cheesedb.cheesedb.svc:7700` and trust the same `ca.crt`.
+
+## Try your own build on a laptop (kind)
+
+```sh
+docker build -t cheesedb:dev https://github.com/govinargo-labs/cheesedb.git
+kind create cluster --name cheesedb
+kind load docker-image cheesedb:dev --name cheesedb
+
+git clone https://github.com/govinargo-labs/cheesedb-helm.git && cd cheesedb-helm
+helm install mem ./charts/cheesedb -n cheesedb --create-namespace \
+  --set image.repository=cheesedb --set image.tag=dev --set image.pullPolicy=Never
+```
 
 ## TLS
 
@@ -55,7 +72,7 @@ The server serves TLS only; there is no plain HTTP setting. `tls.mode` picks whe
 | `certManager` | A cert-manager `Certificate` from `tls.certManager.issuerRef`. |
 | `existingSecret` | Your own `kubernetes.io/tls` Secret, named in `tls.existingSecret`. |
 
-Add more names with `tls.extraDnsNames`.
+Add more names with `tls.extraDnsNames`. The self-signed certificate is made once and reused: changing `tls.extraDnsNames` or `validDays` later has no effect until you delete the Secret `<release>-cheesedb-tls` and upgrade (that also makes a new `ca.crt`, which clients must trust again). In `certManager` and `existingSecret` modes the server reads the certificate at start: restart the pod after the certificate is renewed.
 
 ## Admin token
 
@@ -65,11 +82,13 @@ The admin token creates and deletes agents. The server keeps only its SHA-256 (t
 - **Keep the token out of the cluster:** make it yourself and give only its hash, which is safe to store anywhere:
 
   ```sh
-  TOKEN=$(openssl rand -hex 32)          # keep this one secret
-  helm install mem ./charts/cheesedb --set admin.keyHash=$(printf %s "$TOKEN" | shasum -a 256 | cut -d' ' -f1)
+  TOKEN=$(openssl rand -hex 32)          # keep this one secret: save it in your password manager now
+  helm install mem oci://ghcr.io/govinargo-labs/charts/cheesedb --version 0.1.0 --set admin.keyHash=$(printf %s "$TOKEN" | shasum -a 256 | cut -d' ' -f1)
   ```
 
 - **Or** name your own Secret holding the hash under the key `admin.key`: `admin.existingSecret`.
+
+- **Argo CD, Flux or other GitOps tools:** they render the chart without reading the cluster, so the chart cannot see the token and certificate it made before. Every sync would make a new admin token and certificate authority (locking out the admin and breaking clients that trust the old `ca.crt`), and committing rendered output would put the token and the TLS key in git. With GitOps, use `admin.keyHash` or `admin.existingSecret`, and `tls.mode` `certManager` or `existingSecret`. Never commit `helm template` output made with the default values.
 
 Each agent's token is returned once, by the request that creates the agent. The server keeps only its hash.
 
@@ -91,6 +110,10 @@ Each agent's token is returned once, by the request that creates the agent. The 
 helm uninstall mem -n cheesedb
 kubectl delete pvc -n cheesedb data-mem-cheesedb-0   # the store; it is kept unless you delete it
 ```
+
+## Publishing (maintainers)
+
+A push to `main` that changes the chart publishes the `version` in `charts/cheesedb/Chart.yaml` to `oci://ghcr.io/govinargo-labs/charts/cheesedb` (`.github/workflows/publish.yaml`). A version already published is never overwritten: bump `version` to publish a new one. The chart package must be public on ghcr.io for others to install it.
 
 ## License
 
