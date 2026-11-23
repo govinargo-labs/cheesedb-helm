@@ -1,0 +1,16 @@
+# Helm local state
+/.helm/repository
+/.helm/cache
+/.helm/plugins
+/.helm/getter
+
+# Local chart packaging
+charts/*.tgz
+charts/*.tar.gz
+
+# IDE
+.idea/
+.vscode/settings.json
+
+# OS
+.DS_Store
