@@ -13,23 +13,50 @@ Installs the [cheesedb](https://github.com/govinargo-labs/cheesedb) memory serve
 | Service `<release>-cheesedb`, port 7700 | HTTPS for programs in the cluster |
 | Secret `<release>-cheesedb-tls` | the server's certificate (see TLS below) |
 | Secret `<release>-cheesedb-admin` | the admin key (see Admin token below) |
-| NetworkPolicy (off by default) | only the pods listed in `networkPolicy.from` reach the server (at least one is required); no traffic out |
+| NetworkPolicy (off by default, recommended) | only the pods listed in `networkPolicy.from` reach the server (at least one is required); no traffic out |
 
-The pod runs as a non-root user with a read-only root file system, no added capabilities and no Kubernetes API token. The server calls nothing outside: no model, no other service.
+The pod runs as a non-root user with a read-only root file system, no added capabilities and no Kubernetes API token, and meets the Kubernetes "restricted" Pod Security Standard. The server calls nothing outside: no model, no other service.
+
+**Turn on the NetworkPolicy.** While it is off, every pod in the cluster can reach the server; a token is still needed, but nothing limits who may try. It is off by default only because it must name your agents' pods, which the chart cannot guess:
+
+```sh
+--set networkPolicy.enabled=true --set networkPolicy.from[0].podSelector.matchLabels.app=my-agent
+```
+
+Keep `service.type` at `ClusterIP`. `LoadBalancer` or `NodePort` puts the server outside the cluster, often on the internet.
 
 ## Install
 
 The chart is published to GitHub's container registry. Needs Helm 3.8 or newer.
 
 ```sh
-helm install mem oci://ghcr.io/govinargo-labs/charts/cheesedb --version 0.1.0 \
+helm install mem oci://ghcr.io/govinargo-labs/charts/cheesedb --version 0.2.0 \
   -n cheesedb --create-namespace
 ```
 
 It runs the image `ghcr.io/govinargo-labs/cheesedb`, tagged with the chart's `appVersion`.
 
+### Check the signatures
+
+From cheesedb 0.4.1 on, each image is scanned for known vulnerabilities before it is published and signed with [cosign](https://docs.sigstore.dev/) by the workflow that built it. Each new version of this chart is signed the same way. Check them before you install:
+
+```sh
+# the image
+cosign verify ghcr.io/govinargo-labs/cheesedb:0.4.1 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/govinargo-labs/cheesedb/\.github/workflows/image\.yml@refs/'
+
+# the chart
+cosign verify ghcr.io/govinargo-labs/charts/cheesedb:<chart version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity https://github.com/govinargo-labs/cheesedb-helm/.github/workflows/publish.yaml@refs/heads/main
+```
+
+To run exactly the image you checked, even if someone moves its tag, pin its digest (cosign prints it): `--set image.digest=sha256:...`.
+
 | Chart version | Installs cheesedb |
 |---|---|
+| 0.2.x | 0.4.1 (Go 1.26.11, scanned and signed image) |
 | 0.1.x | 0.4.0 |
 
 The chart has its own version: a chart-only fix bumps the patch number (0.1.0 to 0.1.1) and keeps the same cheesedb; a new cheesedb release bumps the minor number (0.2.0). The notes printed after install show how to:
@@ -83,7 +110,7 @@ The admin token creates and deletes agents. The server keeps only its SHA-256 (t
 
   ```sh
   TOKEN=$(openssl rand -hex 32)          # keep this one secret: save it in your password manager now
-  helm install mem oci://ghcr.io/govinargo-labs/charts/cheesedb --version 0.1.0 --set admin.keyHash=$(printf %s "$TOKEN" | shasum -a 256 | cut -d' ' -f1)
+  helm install mem oci://ghcr.io/govinargo-labs/charts/cheesedb --version 0.2.0 --set admin.keyHash=$(printf %s "$TOKEN" | shasum -a 256 | cut -d' ' -f1)
   ```
 
 - **Or** name your own Secret holding the hash under the key `admin.key`: `admin.existingSecret`.
@@ -97,6 +124,7 @@ Each agent's token is returned once, by the request that creates the agent. The 
 | Value | Default | |
 |---|---|---|
 | `image.repository`, `image.tag` | `ghcr.io/govinargo-labs/cheesedb`, the chart's appVersion | |
+| `image.digest` | empty | `sha256:...`: run exactly this image, whatever its tag points to (see Check the signatures) |
 | `persistence.size`, `persistence.storageClass` | `10Gi`, the cluster default | |
 | `resources` | requests 100m / 256Mi, limit 2Gi | An open agent keeps its graph in memory, and each loaded vector index about one byte per value per vector (1M memories x 768 values: about 1.1 GB). |
 | `service.type`, `service.port` | `ClusterIP`, `7700` | |

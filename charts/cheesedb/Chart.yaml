@@ -2,8 +2,8 @@ apiVersion: v2
 name: cheesedb
 description: The cheesedb memory server for AI agents (preview). One server per store, TLS always.
 type: application
-version: 0.1.0
-appVersion: "0.4.0"
+version: 0.2.0
+appVersion: "0.4.1"
 home: https://cheesedb.dev/server
 sources:
   - https://github.com/govinargo-labs/cheesedb-helm

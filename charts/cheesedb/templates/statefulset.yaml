@@ -42,7 +42,7 @@ spec:
       terminationGracePeriodSeconds: 45
       containers:
         - name: cheesedb
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "cheesedb.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - serve

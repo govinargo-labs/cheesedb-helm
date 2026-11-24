@@ -4,6 +4,10 @@ image:
   repository: ghcr.io/govinargo-labs/cheesedb
   # Default: the chart's appVersion.
   tag: ""
+  # Optional, e.g. sha256:4f2c...: run exactly this image, even if someone
+  # moves the tag. Each release's image is signed; check the digest with
+  # cosign verify (see the README) before pinning it here.
+  digest: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
@@ -51,6 +55,9 @@ persistence:
   accessMode: ReadWriteOnce
 
 service:
+  # Keep ClusterIP. LoadBalancer or NodePort puts the server outside the
+  # cluster, often on the internet, where anyone holding an agent's token
+  # can read and erase that agent's memory (the server is a preview).
   type: ClusterIP
   port: 7700
 
@@ -69,6 +76,9 @@ resources:
     memory: 2Gi
 
 # Only let chosen pods reach the server, and let it send nothing out.
+# Recommended: while it is off, every pod in the cluster can reach the
+# server (it still needs a token). Off by default only because it must
+# name your agents' pods in "from", which the chart cannot guess.
 # Needs a network plugin that enforces NetworkPolicy. Turning it on
 # requires at least one peer in "from".
 networkPolicy:
