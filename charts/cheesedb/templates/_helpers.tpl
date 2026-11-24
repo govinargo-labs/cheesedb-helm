@@ -35,6 +35,20 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{- end -}}
 {{- end -}}
 
+{{/* The image to run: repository:tag, and @digest when image.digest is set.
+     With a digest, the node runs exactly that image even if the tag is
+     moved; the tag stays for people reading the manifest. */}}
+{{- define "cheesedb.image" -}}
+{{- $img := printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) -}}
+{{- with .Values.image.digest -}}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" .) -}}
+{{- fail "image.digest must be sha256: followed by 64 lowercase hex characters" -}}
+{{- end -}}
+{{- $img = printf "%s@%s" $img . -}}
+{{- end -}}
+{{- $img -}}
+{{- end -}}
+
 {{- define "cheesedb.adminSecret" -}}
 {{- if .Values.admin.existingSecret -}}
 {{- .Values.admin.existingSecret -}}

@@ -22,3 +22,14 @@ yet; keep the server inside a trusted cluster).
 
 Inside the cluster, programs call https://{{ include "cheesedb.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
 and trust the same certificate.
+{{- if not .Values.networkPolicy.enabled }}
+
+WARNING: networkPolicy is off, so every pod in the cluster can reach the
+server. Turn it on and list your agents' pods:
+  --set networkPolicy.enabled=true --set networkPolicy.from[0].podSelector.matchLabels.app=<your-agent>
+{{- end }}
+{{- if ne .Values.service.type "ClusterIP" }}
+
+WARNING: service.type is {{ .Values.service.type }}, so the server can be reached from
+outside the cluster. Keep it ClusterIP unless you need that.
+{{- end }}
