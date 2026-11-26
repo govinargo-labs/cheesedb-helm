@@ -59,6 +59,8 @@ To run exactly the image you checked, even if someone moves its tag, pin its dig
 | 0.2.x | 0.4.1 (Go 1.26.11, scanned and signed image) |
 | 0.1.x | 0.4.0 |
 
+A new cheesedb release needs no work here: once a day, [a workflow](.github/workflows/bump-app.yaml) checks for one, verifies its signed image, and opens the pull request that moves the chart to it. Merging it publishes the chart.
+
 The chart has its own version: a chart-only fix bumps the patch number (0.1.0 to 0.1.1) and keeps the same cheesedb; a new cheesedb release bumps the minor number (0.2.0). The notes printed after install show how to:
 - get the certificate to trust;
 - read the admin token;
