@@ -1,0 +1,142 @@
+# Once a day (and by hand from the Actions tab), looks for a cheesedb
+# release newer than the chart's appVersion. If there is one, and its image
+# is published and signed by cheesedb's image workflow, it opens a pull
+# request that moves the chart to it (.github/scripts/bump-app.sh:
+# appVersion, the next minor chart version, README). Nothing is published
+# here: merging the pull request publishes the chart (publish.yaml).
+#
+# Set up once: Settings > Actions > General > Workflow permissions >
+# "Allow GitHub Actions to create and approve pull requests". Without it,
+# the last step fails.
+#
+# A pull request opened with GITHUB_TOKEN does not start other workflows
+# (GitHub's rule), so this job lints and renders the chart itself first.
+#
+# Actions are pinned to full commit SHAs (the tag is in the comment).
+name: Follow cheesedb releases
+
+on:
+  schedule:
+    - cron: '23 6 * * *'   # every day at 06:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HELM_VERSION: v4.3.1
+  IMAGE: ghcr.io/govinargo-labs/cheesedb
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push the bump branch
+      pull-requests: write   # open its pull request
+    concurrency:
+      group: bump-app
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      # Pre-releases count (every cheesedb release is one until v1.0.0);
+      # drafts and suffixed tags (v0.5.0-rc1) do not. Stops quietly when
+      # the chart is up to date or a bump pull request is already open.
+      - name: Find the newest cheesedb release
+        id: rel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag=$(gh api 'repos/govinargo-labs/cheesedb/releases?per_page=100' \
+                  --jq '.[] | select(.draft | not) | .tag_name' \
+                | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1)
+          if [ -z "$tag" ]; then
+            echo "Found no cheesedb release." >&2
+            exit 1
+          fi
+          app=${tag#v}
+          current=$(awk -F'"' '/^appVersion:/ {print $2}' charts/cheesedb/Chart.yaml)
+          branch="bump/cheesedb-$app"
+          if [ "$(printf '%s\n%s\n' "$current" "$app" | sort -V | tail -n1)" = "$current" ]; then
+            echo "The chart installs cheesedb $current; the newest release is $app. Nothing to do."
+          elif [ -n "$(git ls-remote --heads origin "refs/heads/$branch")" ]; then
+            echo "Branch $branch exists, so its pull request is waiting. Nothing to do."
+          else
+            echo "New cheesedb release $app (the chart installs $current)."
+            echo "app=$app" >> "$GITHUB_OUTPUT"
+            echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install cosign
+        if: steps.rel.outputs.app != ''
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4
+
+      # The image is built after the release is published. If it is not
+      # there yet, or not signed, this fails and tomorrow's run tries again.
+      - name: Check the image is published and signed
+        if: steps.rel.outputs.app != ''
+        env:
+          APP: ${{ steps.rel.outputs.app }}
+        run: |
+          cosign verify "$IMAGE:$APP" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp '^https://github\.com/govinargo-labs/cheesedb/\.github/workflows/image\.yml@refs/' \
+            > /dev/null
+          echo "$IMAGE:$APP is signed by cheesedb's image workflow."
+
+      - name: Move the chart to the new release
+        id: bump
+        if: steps.rel.outputs.app != ''
+        env:
+          APP: ${{ steps.rel.outputs.app }}
+        run: echo "chart=$(.github/scripts/bump-app.sh "$APP")" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Helm
+        if: steps.rel.outputs.app != ''
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # The rendered output holds a fresh admin token and TLS key: never kept.
+      - name: Lint and render the chart (output discarded)
+        if: steps.rel.outputs.app != ''
+        run: |
+          helm lint ./charts/cheesedb
+          helm template mem ./charts/cheesedb --namespace cheesedb > /dev/null
+
+      - name: Open the pull request
+        if: steps.rel.outputs.app != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP: ${{ steps.rel.outputs.app }}
+          BRANCH: ${{ steps.rel.outputs.branch }}
+          CHART: ${{ steps.bump.outputs.chart }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$BRANCH"
+          git commit -am "Chart $CHART: cheesedb $APP"
+          # persist-credentials is off, so the token is given to this push only.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "Chart $CHART: cheesedb $APP" \
+            --body "$(cat <<EOF
+          Moves the chart to [cheesedb v$APP](https://github.com/govinargo-labs/cheesedb/releases/tag/v$APP): \`appVersion\` $APP, chart version $CHART, README.
+
+          - The image \`$IMAGE:$APP\` is published and its cosign signature checks out.
+          - \`helm lint\` and \`helm template\` pass.
+
+          **Merging publishes chart $CHART.** Read the cheesedb release notes first: a release can need new chart settings.
+
+          Opened by \`.github/workflows/bump-app.yaml\`. Its checks do not run on their own here (GitHub's rule for pull requests opened by a workflow); close and reopen to run them.
+          EOF
+          )"
